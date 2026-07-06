@@ -11,6 +11,10 @@ on:
 jobs:
   run_minestrator_restart:
     runs-on: ubuntu-latest
+    
+    # 💡 核心修改 1：赋予 Workflow 写入仓库的权限
+    permissions:
+      contents: write
 
     steps:
       - name: 📥 下载代码
@@ -39,7 +43,6 @@ jobs:
       - name: 🛠️ 安装系统依赖
         run: |
           sudo apt-get update
-          # 修复：ubuntu-latest 默认源没有 google-chrome-stable，改用 seleniumbase 内置安装
           sudo apt-get install -y xvfb x11-utils xdotool scrot
 
       - name: 🐍 安装 Python 依赖
@@ -65,3 +68,14 @@ jobs:
         with:
           name: debug-screenshots
           path: "*.png"
+
+      # 💡 核心修改 2：自动更新 keepalive 文件并推送回仓库
+      - name: 🔄 保持仓库活跃 (防止60天禁用)
+        if: always() # 确保前面的步骤失败时，也能执行此步骤保活
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "github-actions[bot]"
+          echo "Last run: $(date)" > keepalive.txt
+          git add keepalive.txt
+          git commit -m "chore: auto-keepalive [skip ci]" || echo "No changes to commit"
+          git push

@@ -101,7 +101,7 @@ def inject_listener(sb):
         print(f"⚠️ 监听器注入失败：{e}")
 
 
-def wait_for_token(sb, timeout=60) -> str:
+def wait_for_token(sb, timeout=30) -> str:
     print(f"⏳ 等待 Turnstile Token 自动生成（最多 {timeout} 秒）...")
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -126,7 +126,7 @@ def wait_for_token(sb, timeout=60) -> str:
             pass
         time.sleep(1)
 
-    print("❌ 等待 Token 超时")
+    print("ℹ️ 未能捕获到 Token（可能新版页面无验证码），将尝试直接推进。")
     return ''
 
 
@@ -156,7 +156,7 @@ def send_restart(sb, token: str) -> bool:
         result = sb.execute_async_script(script)
         print(f"📡 API响应：{result}")
         if result.get("ok") and result.get("data", {}).get("api", {}).get("code") == 200:
-            print("✅ 重启指令已成功送达！")
+            print("✅ API 重启指令已成功送达！")
             return True
         print(f"❌ API返回异常：{result}")
         return False
@@ -198,7 +198,6 @@ def run_script():
 
         print("✏️ 填写账号密码...")
         try:
-            # 复合选择器：同时适配新 UI 的占位符/类型定义与旧 UI 的 name 属性
             username_selector = "input[type='text'], input[placeholder*='utilisateur'], input[name='pseudo']"
             password_selector = "input[type='password'], input[name='password']"
             
@@ -206,7 +205,6 @@ def run_script():
             sb.type(username_selector, EMAIL)
             sb.type(password_selector, PASSWORD)
             try:
-                # 兼容新老版本的记住我复选框
                 sb.execute_script(
                     "var r=document.querySelector('input[type=\"checkbox\"], #remember'); if(r) r.checked=true;"
                 )
@@ -219,7 +217,6 @@ def run_script():
 
         print("📤 提交登录请求...")
         try:
-            # 优先使用新版绿色的 "Se connecter" 文本定位按钮，其次使用 submit 类型或老版类名
             if sb.is_element_visible('button:contains("Se connecter")'):
                 sb.click('button:contains("Se connecter")')
             elif sb.is_element_visible("button[type='submit']"):
@@ -245,49 +242,71 @@ def run_script():
             sb.save_screenshot("login_timeout.png")
             return
 
-        # ── 跳转服务器管理页 ──────────────────────────────────
+        # ── 跳转服务器 management 页 ──────────────────────────────────
         print(f"🔃 跳转至服务器管理页：{SERVER_URL}")
         sb.open(SERVER_URL)
-        time.sleep(3)
+        time.sleep(5)
         print(f"📄 当前页面：{sb.get_current_url()}")
         sb.save_screenshot("server_page.png")
 
-        # ── 注入监听器 ────────────────────────────────────────
+        # ── 试图捕获 Token ────────────────────────────────────
         inject_listener(sb)
+        token = wait_for_token(sb, timeout=20) # 缩短等待时间，不浪费无谓的各向同性时间
 
-        # ── 等待 Token ────────────────────────────────────────
-        token = wait_for_token(sb, timeout=60)
-        if not token:
-            sb.save_screenshot("token_timeout.png")
-            send_tg("❌ Token 获取超时", "Turnstile 未能自动完成")
-            return
+        # ── 发送重启指令（第一保险：API 路径） ─────────────────
+        print("🚀 尝试通过后台 API 发送重启请求...")
+        api_success = send_restart(sb, token)
 
-        # ── 发送重启指令 ──────────────────────────────────────
-        if not send_restart(sb, token):
-            sb.save_screenshot("api_fail.png")
-            send_tg("❌ API 重启请求失败", f"Token长度={len(token)}")
-            return
+        # ── （第二保险：前端 UI 模拟点击兜底） ─────────────────
+        if not api_success:
+            print("🔄 后台 API 未响应成功，启动第二预案：模拟真人点击前端网页按钮...")
+            try:
+                # 兼容新老版法文面板的“重启”按钮特征词 (Redémarrer)
+                ui_selectors = [
+                    'button:contains("Redémarrer")',
+                    'a:contains("Redémarrer")',
+                    'button[data-action="restart"]',
+                    '.btn-restart',
+                    '[id*="restart"]'
+                ]
+                clicked = False
+                for selector in ui_selectors:
+                    if sb.is_element_visible(selector):
+                        sb.click(selector)
+                        print(f"✅ 成功点击前端网页重启按钮: {selector}")
+                        clicked = True
+                        time.sleep(3)
+                        break
+                
+                if not clicked:
+                    raise Exception("在前台页面未匹配到任何叫做 'Redémarrer' 或包含 restart 的按钮")
+            except Exception as e:
+                print(f"❌ 双重重启方案均告失败。")
+                sb.save_screenshot("all_methods_failed.png")
+                send_tg("❌ 重启请求失败", f"API与UI点击均失效。错误原因: {e}")
+                return
 
-        # ── 刷新页面，等待剩余时间更新 ──────────────────────
-        print("🔄 刷新页面等待利用期限更新...")
+        # ── 刷新页面，验证利用期限 ──────────────────────
+        print("🔄 刷新页面等待状态更新...")
         time.sleep(5)
         sb.open(SERVER_URL)
         time.sleep(5)
         try:
             remaining = sb.execute_script(r"""
                 (function(){
-                    var spans = document.querySelectorAll('[data-slot="base"] span');
+                    var spans = document.querySelectorAll('[data-slot="base"] span, .time-remaining, span:contains("h")');
                     var parts = [];
                     for (var i = 0; i < spans.length; i++) {
                         var t = spans[i].textContent.trim();
-                        if (/^\d+[hms]$/.test(t)) parts.push(t);
+                        if (/^\d+[hms]$/.test(t) || /\d+\s*heur/.test(t)) parts.push(t);
                     }
                     return parts.length ? parts.join(' ') : '';
                 })()
             """)
-            detail = f"⏰ 利用期限：{remaining}" if remaining else "⏰ 利用期限：获取失败"
+            detail = f"⏰ 利用期限：{remaining}" if remaining else "⏰ 利用期限：已发出重启指令（未能精准截取剩余时间文本）"
         except Exception:
-            detail = "利用期限：获取失败"
+            detail = "利用期限：无法获取具体文本"
+        
         print(f"⏱️ {detail}")
         send_tg("✅ 重启成功！", detail)
 

@@ -198,30 +198,38 @@ def run_script():
 
         print("✏️ 填写账号密码...")
         try:
-            sb.wait_for_element_visible("input[name='pseudo']", timeout=20)
-            sb.type("input[name='pseudo']", EMAIL)
-            sb.type("input[name='password']", PASSWORD)
+            # 复合选择器：同时适配新 UI 的占位符/类型定义与旧 UI 的 name 属性
+            username_selector = "input[type='text'], input[placeholder*='utilisateur'], input[name='pseudo']"
+            password_selector = "input[type='password'], input[name='password']"
+            
+            sb.wait_for_element_visible(username_selector, timeout=20)
+            sb.type(username_selector, EMAIL)
+            sb.type(password_selector, PASSWORD)
             try:
+                # 兼容新老版本的记住我复选框
                 sb.execute_script(
-                    "var r=document.querySelector('#remember'); if(r) r.checked=true;"
+                    "var r=document.querySelector('input[type=\"checkbox\"], #remember'); if(r) r.checked=true;"
                 )
             except Exception:
                 pass
-        except Exception:
-            print("❌ 登录框加载失败")
+        except Exception as e:
+            print(f"❌ 登录框加载失败，报错详情: {e}")
             sb.save_screenshot("login_fail.png")
             return
 
         print("📤 提交登录请求...")
         try:
-            sb.find_element("button[type='submit']").click()
-        except Exception:
-            try:
-                sb.find_element(".btn-text").click()
-            except Exception:
-                print("❌ 登录按钮不可用")
-                sb.save_screenshot("login_submit_fail.png")
-                return
+            # 优先使用新版绿色的 "Se connecter" 文本定位按钮，其次使用 submit 类型或老版类名
+            if sb.is_element_visible('button:contains("Se connecter")'):
+                sb.click('button:contains("Se connecter")')
+            elif sb.is_element_visible("button[type='submit']"):
+                sb.click("button[type='submit']")
+            else:
+                sb.click(".btn-text")
+        except Exception as e:
+            print(f"❌ 登录按钮不可用，报错详情: {e}")
+            sb.save_screenshot("login_submit_fail.png")
+            return
 
         print("⏳ 等待登录跳转...")
         for _ in range(40):

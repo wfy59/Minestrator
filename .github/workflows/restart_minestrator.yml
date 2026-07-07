@@ -2,12 +2,7 @@ name: Minestrator-Restart
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 1 * * *'   # 北京时间 09:00
-    - cron: '0 5 * * *'   # 北京时间 13:00
-    - cron: '0 9 * * *'   # 北京时间 17:00
-    - cron: '0 13 * * *'  # 北京时间 21:00
-
+  
 jobs:
   run_minestrator_restart:
     runs-on: ubuntu-latest

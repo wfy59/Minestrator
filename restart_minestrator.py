@@ -196,11 +196,14 @@ def run_script():
         sb.uc_open_with_reconnect(LOGIN_URL, reconnect_time=4)
         time.sleep(3)
 
+        # 登录前先把 Turnstile 监听器注入，等 token 出现再点登录
+        inject_listener(sb)
+
         print("✏️ 填写账号密码...")
         try:
             username_selector = "input[type='text'], input[placeholder*='utilisateur'], input[name='pseudo']"
             password_selector = "input[type='password'], input[name='password']"
-            
+
             sb.wait_for_element_visible(username_selector, timeout=20)
             sb.type(username_selector, EMAIL)
             sb.type(password_selector, PASSWORD)
@@ -228,9 +231,16 @@ def run_script():
             sb.save_screenshot("login_submit_fail.png")
             return
 
+        # 点完登录按钮后立刻再注一次监听器（有些页面会在提交后才渲染 Turnstile）
+        inject_listener(sb)
+
         print("⏳ 等待登录跳转...")
-        for _ in range(40):
+        # 登录等待时间：Minestrator 登录需走 Turnstile + 二次跳转，
+        # 之前默认 20s 太短容易超时。这里放宽到 90s（180 * 0.5s）。
+        for i in range(180):
             try:
+                # 顺手读取 Turnstile token，便于排查
+                _ = sb.execute_script(READ_TOKEN_JS)
                 if "/connexion" not in sb.get_current_url():
                     print(f"✅ 登录成功！当前页：{sb.get_current_url()}")
                     break
@@ -238,7 +248,14 @@ def run_script():
                 pass
             time.sleep(0.5)
         else:
-            print("❌ 登录等待超时")
+            print("❌ 登录等待超时（已等待 90 秒）")
+            try:
+                cur = sb.get_current_url()
+                print(f"   当前 URL：{cur}")
+                body_snip = sb.execute_script("document.body.innerText.slice(0, 500)")
+                print(f"   页面文本前 500 字符：{body_snip}")
+            except Exception:
+                pass
             sb.save_screenshot("login_timeout.png")
             return
 
@@ -251,7 +268,7 @@ def run_script():
 
         # ── 试图捕获 Token ────────────────────────────────────
         inject_listener(sb)
-        token = wait_for_token(sb, timeout=20) # 缩短等待时间，不浪费无谓的各向同性时间
+        token = wait_for_token(sb, timeout=30)  # 留足时间等 Token
 
         # ── 发送重启指令（第一保险：API 路径） ─────────────────
         print("🚀 尝试通过后台 API 发送重启请求...")
@@ -261,7 +278,7 @@ def run_script():
         if not api_success:
             print("🔄 后台 API 未响应成功，启动第二预案：模拟真人点击前端网页按钮...")
             try:
-                # 兼容新老版法文面板的“重启”按钮特征词 (Redémarrer)
+                # 兼容新老版法文面板的"重启"按钮特征词 (Redémarrer)
                 ui_selectors = [
                     'button:contains("Redémarrer")',
                     'a:contains("Redémarrer")',
@@ -277,7 +294,7 @@ def run_script():
                         clicked = True
                         time.sleep(3)
                         break
-                
+
                 if not clicked:
                     raise Exception("在前台页面未匹配到任何叫做 'Redémarrer' 或包含 restart 的按钮")
             except Exception as e:
@@ -306,7 +323,7 @@ def run_script():
             detail = f"⏰ 利用期限：{remaining}" if remaining else "⏰ 利用期限：已发出重启指令（未能精准截取剩余时间文本）"
         except Exception:
             detail = "利用期限：无法获取具体文本"
-        
+
         print(f"⏱️ {detail}")
         send_tg("✅ 重启成功！", detail)
 
